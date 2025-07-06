@@ -1,40 +1,11 @@
-name: Run Tests
+name: CI Tests Only
 
-on: [push, pull_request]  
+on: [push, pull_request]
 
 jobs:
-  setup-ruby:
+  environment-setup:
+    name: Preparar entorno y base de datos
     runs-on: ubuntu-latest
-    outputs:
-      ruby-path: ${{ steps.ruby-setup.outputs.ruby-prefix }}
-      bundle-cache-key: ${{ steps.bundle-cache.outputs.cache-key }}
-    steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-
-      - name: Configurar Ruby
-        id: ruby-setup
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: 3.2.7  
-
-      - name: Instalar Bundler y dependencias
-        run: |
-          gem install bundler --no-document
-          bundle config set deployment 'true'
-          bundle install --jobs 4 --retry 3
-      - name: Guardar gems en caché
-        id: bundle-cache
-        uses: actions/cache@v3
-        with:
-          path: vendor/bundle
-          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
-          restore-keys: |
-            gems-${{ runner.os }}-
-
-  deploy-to-testing:
-    runs-on: ubuntu-latest
-    needs: setup-ruby
     services:
       postgres:
         image: postgres:15
@@ -42,66 +13,54 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: tienda3_test
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
       redis:
         image: redis:latest
-        ports:
-          - 6379:6379
+        ports: ['6379:6379']
 
     env:
       RAILS_ENV: test
-      DATABASE_URL: "postgres://postgres:postgres@localhost:5432/tienda3_test"
-      REDIS_URL: "redis://localhost:6379/0"
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/tienda3_test
+      REDIS_URL: redis://localhost:6379/0
 
     steps:
-      - name: Checkout código
+      - name: Clonar repositorio
         uses: actions/checkout@v4
 
-      - name: Configurar Ruby
-        id: ruby-setup
+      - name: Instalar Ruby y dependencias
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: 3.2.7  
-      
+          ruby-version: 3.2.7
 
-      - name: Restaurar caché de gems
-        uses: actions/cache@v3
-        with:
-          path: vendor/bundle
-          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
-          restore-keys: |
-            gems-${{ runner.os }}-
-      
-      - name: Instalar las gemas que faltan
+      - name: Instalar bundler y gems
         run: |
-          gem install bundler --no-document
-          bundle config set --local path 'vendor/bundle'
-          bundle install --jobs 4 --retry 3
-  
+          gem install bundler
+          bundle config set path 'vendor/bundle'
+          bundle install
+
       - name: Configurar base de datos
-        run: bundle exec bin/rails db:create db:migrate
-      
-      - name: Guardar dump de la BD
+        run: bundle exec rails db:create db:migrate
+
+      - name: Dump de la base de datos
         run: pg_dump -U postgres -h localhost tienda3_test > db_dump.sql
         env:
           PGPASSWORD: postgres
 
-      - name: Subir dump como artefacto
+      - name: Guardar dump como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: database-dump
+          name: dump-bd
           path: db_dump.sql
 
-  test-unit:
+  unit-tests:
+    name: Ejecutar pruebas unitarias
     runs-on: ubuntu-latest
-    needs: deploy-to-testing
+    needs: environment-setup
     services:
       postgres:
         image: postgres:15
@@ -109,71 +68,56 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: tienda3_test
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
       redis:
         image: redis:latest
-        ports:
-          - 6379:6379
+        ports: ['6379:6379']
 
     env:
-      DATABASE_URL: "postgres://postgres:postgres@localhost:5432/tienda3_test"
-      REDIS_URL: "redis://localhost:6379/0"
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/tienda3_test
+      REDIS_URL: redis://localhost:6379/0
 
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-        
-      - name: Configurar Ruby
+      - uses: actions/checkout@v4
+
+      - name: Ruby + Gems
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: 3.2.7
-      
-      - name: Configurar PATH y GEM_PATH
-        run: |
-          echo "GEM_HOME=$(gem env user_gemhome)" >> $GITHUB_ENV
-          echo "GEM_PATH=$(gem env user_gemhome)" >> $GITHUB_ENV
-          echo "$(gem env user_gemhome)/bin" >> $GITHUB_PATH
-      
-      - name: Restaurar caché de gems
-        uses: actions/cache@v3
-        with:
-          path: vendor/bundle
-          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
-          restore-keys: |
-            gems-${{ runner.os }}-
-      
-      - name: Instalar las gemas que faltan
-        run: bundle install --jobs 4 --retry 3
-      
 
-      - name: Descargar dump de la BD
+      - name: Instalar dependencias
+        run: |
+          bundle config set path 'vendor/bundle'
+          bundle install
+
+      - name: Restaurar dump
         uses: actions/download-artifact@v4
         with:
-          name: database-dump
+          name: dump-bd
 
-      - name: Restaurar BD desde dump
+      - name: Cargar base de datos
         run: psql -U postgres -h localhost -d tienda3_test < db_dump.sql
         env:
           PGPASSWORD: postgres
 
       - name: Ejecutar pruebas unitarias
-        run: bundle exec rails test | tee tmp/test-results-unit.log      
+        run: bundle exec rails test | tee tmp/unit.log
 
-      - name: Guardar resultados de pruebas unitarias
+      - name: Guardar resultados
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-unit
-          path: tmp/test-results-unit.log
+          name: unit-results
+          path: tmp/unit.log
 
-  test-system:
+  system-tests:
+    name: Ejecutar pruebas de sistema
     runs-on: ubuntu-latest
-    needs: deploy-to-testing
+    needs: environment-setup
     services:
       postgres:
         image: postgres:15
@@ -181,66 +125,52 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: tienda3_test
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
       redis:
         image: redis:latest
-        ports:
-          - 6379:6379
+        ports: ['6379:6379']
 
     env:
-      DATABASE_URL: "postgres://postgres:postgres@localhost:5432/tienda3_test"
-      REDIS_URL: "redis://localhost:6379/0"
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/tienda3_test
+      REDIS_URL: redis://localhost:6379/0
 
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-      
-      - name: Configurar Ruby
+      - uses: actions/checkout@v4
+
+      - name: Ruby + Bundle
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: 3.2.7
 
-      - name: Configurar PATH y GEM_PATH
+      - name: Instalar dependencias
         run: |
-          echo "GEM_HOME=$(gem env user_gemhome)" >> $GITHUB_ENV
-          echo "GEM_PATH=$(gem env user_gemhome)" >> $GITHUB_ENV
-          echo "$(gem env user_gemhome)/bin" >> $GITHUB_PATH
-      
-      - name: Restaurar caché de gems
-        uses: actions/cache@v3
-        with:
-          path: vendor/bundle
-          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
-          restore-keys: |
-            gems-${{ runner.os }}-
-      
-      - name: Instalar las gemas que faltan
-        run: bundle install --jobs 4 --retry 3
-      
-      - name: Descargar dump de la BD
+          bundle config set path 'vendor/bundle'
+          bundle install
+
+      - name: Restaurar dump
         uses: actions/download-artifact@v4
         with:
-          name: database-dump
+          name: dump-bd
 
-      - name: Restaurar BD desde dump
+      - name: Cargar BD
         run: psql -U postgres -h localhost -d tienda3_test < db_dump.sql
         env:
           PGPASSWORD: postgres
 
-      - name: Ejecutar pruebas de sistema individualmente
+      - name: Ejecutar pruebas de sistema
         run: |
-          for test_file in $(find test/system -name "*.rb"); do
-            bundle exec rails test $test_file | tee -a tmp/test-results-system.log
+          mkdir -p tmp
+          for file in $(find test/system -name "*.rb"); do
+            bundle exec rails test $file | tee -a tmp/system.log
           done
-      - name: Guardar resultados de pruebas de sistema
+
+      - name: Guardar resultados
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-system
-          path: tmp/test-results-system.log
-  
+          name: system-results
+          path: tmp/system.log
