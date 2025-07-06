@@ -31,88 +31,6 @@ jobs:
           key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
           restore-keys: |
             gems-${{ runner.os }}-
-  
-  rubocop-lint:
-    runs-on: ubuntu-latest
-    needs: setup-ruby
-    steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-      
-      - name: Configurar Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: 3.2.7
-
-
-      - name: Restaurar caché de gems
-        uses: actions/cache@v3
-        with:
-          path: vendor/bundle
-          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
-          restore-keys: |
-            gems-${{ runner.os }}-
-      
-      - name: Instalar las gemas que faltan
-        run: |
-          gem install bundler --no-document --user-install
-          export GEM_HOME="$(ruby -e 'puts Gem.user_dir')"
-          export GEM_PATH="$GEM_HOME"
-          export PATH="$GEM_HOME/bin:$PATH"
-          echo "GEM_HOME=$GEM_HOME" >> $GITHUB_ENV
-          echo "GEM_PATH=$GEM_PATH" >> $GITHUB_ENV
-          echo "$GEM_HOME/bin" >> $GITHUB_PATH
-          bundle config set --local path 'vendor/bundle'
-          bundle install --jobs 4 --retry 3
-      - name: Ejecutar RuboCop y guardar salida
-        run: bundle exec rubocop --format simple > rubocop_output.txt || true
-
-      - name: Subir reporte de RuboCop como artefacto
-        uses: actions/upload-artifact@v4
-        with:
-          name: rubocop-report
-          path: rubocop_output.txt
-
-  brakeman-security:
-    runs-on: ubuntu-latest
-    needs: setup-ruby
-    steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-      
-      - name: Configurar Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: 3.2.7
-
-
-      - name: Restaurar caché de gems
-        uses: actions/cache@v3
-        with:
-          path: vendor/bundle
-          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
-          restore-keys: |
-            gems-${{ runner.os }}-
-      
-      - name: Instalar las gemas que faltan
-        run: |
-          gem install bundler --no-document --user-install
-          export GEM_HOME="$(ruby -e 'puts Gem.user_dir')"
-          export GEM_PATH="$GEM_HOME"
-          export PATH="$GEM_HOME/bin:$PATH"
-          echo "GEM_HOME=$GEM_HOME" >> $GITHUB_ENV
-          echo "GEM_PATH=$GEM_PATH" >> $GITHUB_ENV
-          echo "$GEM_HOME/bin" >> $GITHUB_PATH
-          bundle config set --local path 'vendor/bundle'
-          bundle install --jobs 4 --retry 3
-      - name: Ejecutar Brakeman y guardar salida
-        run: bundle exec brakeman -o brakeman_report.txt || true
-
-      - name: Subir reporte de Brakeman como artefacto
-        uses: actions/upload-artifact@v4
-        with:
-          name: brakeman-report
-          path: brakeman_report.txt
 
   deploy-to-testing:
     runs-on: ubuntu-latest
@@ -216,7 +134,7 @@ jobs:
         with:
           ruby-version: 3.2.7
       
-      - name: 🔧 Configurar PATH y GEM_PATH
+      - name: Configurar PATH y GEM_PATH
         run: |
           echo "GEM_HOME=$(gem env user_gemhome)" >> $GITHUB_ENV
           echo "GEM_PATH=$(gem env user_gemhome)" >> $GITHUB_ENV
@@ -326,28 +244,3 @@ jobs:
           name: test-results-system
           path: tmp/test-results-system.log
   
-  merge-test-results:
-    runs-on: ubuntu-latest
-    needs: [test-unit, test-system]  
-    steps:
-      - name: Descargar resultados de test unitarios
-        uses: actions/download-artifact@v4
-        with:
-          name: test-results-unit
-          path: tmp/
-        
-      - name: Descargar resultados de test de sistema
-        uses: actions/download-artifact@v4
-        with:
-          name: test-results-system
-          path: tmp/
-        
-      - name: Unir archivos de logs
-        run: cat tmp/test-results-unit.log tmp/test-results-system.log > tmp/test-results-combined.log
-        
-      - name: Guardar resultados combinados
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-combined
-          path: tmp/test-results-combined.log
-          retention-days: 7
